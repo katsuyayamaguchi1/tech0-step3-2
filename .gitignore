@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.local
+
+# 仮想環境
+backend/backend_env/
+
+# DBファイル
+backend/db_control/*.db
+
+# Node
+node_modules/
+.next/
+
+# その他
+*.log
+.DS_Store
+
+# SSL certificates
+backend/certs/*.pem
