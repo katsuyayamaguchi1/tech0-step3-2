@@ -6,8 +6,7 @@ import requests
 import json
 from collections.abc import Generator
 
-# --- 既存の customers 用（そのまま） ---
-from db_control import crud, mymodels
+from sqlalchemy.exc import IntegrityError
 
 # --- ここから追加：DB接続（.env の DATABASE_URL を使用） ---
 import os
@@ -32,7 +31,7 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 # 動作確認用のモデル（Alembicで作成した sample テーブル）
-from db_control.models import Sample  # id, name, created_at
+from db_control.models import Sample, Customers
 
 # --- sample 用のPydantic ---
 from datetime import datetime
@@ -83,7 +82,7 @@ def list_sample(limit: int = 50, db: Session = Depends(get_db)):
     rows = db.query(Sample).order_by(Sample.id.desc()).limit(limit).all()
     return [SampleOut(id=r.id, name=r.name, created_at=r.created_at) for r in rows]
 
-# ===== 既存の customers 系（そのまま） =====
+# ===== 既存の customers 系（ORM版に置き換え） =====
 class Customer(BaseModel):
     customer_id: str
     customer_name: str
@@ -91,49 +90,85 @@ class Customer(BaseModel):
     gender: str
 
 @app.post("/customers")
-def create_customer(customer: Customer):
-    values = customer.dict()
-    _ = crud.myinsert(mymodels.Customers, values)
-    result = crud.myselect(mymodels.Customers, values.get("customer_id"))
-    if result:
-        result_obj = json.loads(result)
-        return result_obj if result_obj else None
-    return None
+def create_customer(customer: Customer, db: Session = Depends(get_db)):
+    obj = Customers(
+        customer_id=customer.customer_id,
+        customer_name=customer.customer_name,
+        age=customer.age,
+        gender=customer.gender,
+    )
+    try:
+        db.add(obj)
+        db.commit()
+        db.refresh(obj)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Customer already exists")
+    return {
+        "customer_id": obj.customer_id,
+        "customer_name": obj.customer_name,
+        "age": obj.age,
+        "gender": obj.gender,
+    }
 
 @app.get("/customers")
-def read_one_customer(customer_id: str = Query(...)):
-    result = crud.myselect(mymodels.Customers, customer_id)
-    if not result:
+def read_one_customer(customer_id: str = Query(...), db: Session = Depends(get_db)):
+    obj = db.get(Customers, customer_id)
+    if not obj:
         raise HTTPException(status_code=404, detail="Customer not found")
-    result_obj = json.loads(result)
-    return result_obj[0] if result_obj else None
+    return {
+        "customer_id": obj.customer_id,
+        "customer_name": obj.customer_name,
+        "age": obj.age,
+        "gender": obj.gender,
+    }
 
 @app.get("/allcustomers")
-def read_all_customer():
-    result = crud.myselectAll(mymodels.Customers)
-    if not result:
-        return []
-    return json.loads(result)
+def read_all_customer(db: Session = Depends(get_db)):
+    rows = db.query(Customers).order_by(Customers.customer_id).all()
+    return [
+        {
+            "customer_id": r.customer_id,
+            "customer_name": r.customer_name,
+            "age": r.age,
+            "gender": r.gender,
+        }
+        for r in rows
+    ]
 
 @app.put("/customers")
-def update_customer(customer: Customer):
-    values = customer.dict()
-    values_original = values.copy()
-    _ = crud.myupdate(mymodels.Customers, values)
-    result = crud.myselect(mymodels.Customers, values_original.get("customer_id"))
-    if not result:
+def update_customer(customer: Customer, db: Session = Depends(get_db)):
+    obj = db.get(Customers, customer.customer_id)
+    if not obj:
         raise HTTPException(status_code=404, detail="Customer not found")
-    result_obj = json.loads(result)
-    return result_obj[0] if result_obj else None
+    obj.customer_name = customer.customer_name
+    obj.age = customer.age
+    obj.gender = customer.gender
+    db.commit()
+    db.refresh(obj)
+    return {
+        "customer_id": obj.customer_id,
+        "customer_name": obj.customer_name,
+        "age": obj.age,
+        "gender": obj.gender,
+    }
 
 @app.delete("/customers")
-def delete_customer(customer_id: str = Query(...)):
-    result = crud.mydelete(mymodels.Customers, customer_id)
-    if not result:
+def delete_customer(customer_id: str = Query(...), db: Session = Depends(get_db)):
+    obj = db.get(Customers, customer_id)
+    if not obj:
         raise HTTPException(status_code=404, detail="Customer not found")
+    db.delete(obj)
+    db.commit()
     return {"customer_id": customer_id, "status": "deleted"}
 
-@app.get("/fetchtest")
-def fetchtest():
-    response = requests.get("https://jsonplaceholder.typicode.com/users")
-    return response.json()
+from sqlalchemy import text  # 既にあれば不要
+
+@app.get("/health/info")
+def health_info():
+    with engine.connect() as conn:
+        ver = conn.execute(text("SELECT VERSION()")).scalar_one()
+        dbn = conn.execute(text("SELECT DATABASE()")).scalar_one()
+        usr = conn.execute(text("SELECT CURRENT_USER()")).scalar_one()
+    return {"db":"ok","version":ver,"database":dbn,"user":usr}
+
