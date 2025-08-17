@@ -17,3 +17,10 @@ frontend/out/
 *.pyc
 __pycache__/
 .DS_Store
+
+# local envs
+.env
+frontend/.env.local
+
+# sqlite / ローカルDBなど
+backend/db_control/*.db
