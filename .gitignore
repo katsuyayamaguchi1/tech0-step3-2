@@ -1,38 +1,19 @@
-# --- Env files ---
-.env
-.env.*
-!.env.example
-.env.local
-
-# --- DB / Migration ---
-*.db
-*.sqlite3
-backend/db_control/*.db
-alembic/versions/__pycache__/
-
-# --- Certificates (Azure MySQL接続証明書は共有しない) ---
+# --- backend ---
+backend/.env
 backend/certs/*.pem
-backend/certs/*.crt
-!backend/certs/README.md
+backend/__pycache__/
+backend/.pytest_cache/
+backend/.venv/
+backend/backend_env/
+# Alembic は追跡したいので ignore しない
 
-# --- Python cache ---
-__pycache__/
+# --- frontend ---
+frontend/.env.local
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# --- 共通 ---
 *.pyc
-*.pyo
-*.pyd
-
-# --- Frontend (DB担当は不要) ---
-frontend/
-
-# --- Backend 全体を無視して DB関連だけ許可 ---
-backend/*
-!backend/db_control/
-!backend/certs/
-!backend/alembic/
-!backend/.env.example
-
-# --- OS / Editor ---
+__pycache__/
 .DS_Store
-.vscode/*
-!.vscode/settings.json
-
