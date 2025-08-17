@@ -1,71 +1,87 @@
 # backend/migrations/env.py
+from __future__ import annotations
 
-import os
-from pathlib import Path
 from logging.config import fileConfig
-
-from sqlalchemy import engine_from_config, pool
 from alembic import context
+from sqlalchemy import create_engine, pool
+from pathlib import Path
+import sys
+import os
+
+# ---- どこから実行しても import できるように、プロジェクトルートを sys.path に追加
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# ---- .env 読み込み（backend/.env）
 from dotenv import load_dotenv
+load_dotenv(ROOT / "backend" / ".env")
 
-# backend/.env を明示して読み込む（migrations の1つ上 = backend）
-ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
-load_dotenv(dotenv_path=ENV_PATH, override=True)
+# ---- アプリ側の Base と URL を再利用
+from backend.db_control.models import Base
+from backend.db_control.session import _db_url
 
-# Alembic Config
+# Alembic 標準設定
 config = context.config
 
-# .env の DATABASE_URL を採用（SSL 付き URL）
-db_url = os.getenv("DATABASE_URL")
-if not db_url:
-    raise RuntimeError(f"DATABASE_URL is not set. Looked at {ENV_PATH}")
-config.set_main_option("sqlalchemy.url", db_url)
-
-# ロギング
+# ログ設定
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# モデルの metadata を渡す（自動検出用）
-from db_control.models import Base
+# メタデータ（autogenerate用）
 target_metadata = Base.metadata
 
-# DB にだけ存在（metadata に無い）オブジェクトは無視＝不要な DROP を出さない
-def include_object(object, name, type_, reflected, compare_to):
-    if reflected and compare_to is None:
-        return False
-    return True
+
+def _resolve_ca_path() -> str | None:
+    """SSL_CA があればそれ、無ければ certifi、最後に mac の既定CA を試す"""
+    p = os.getenv("SSL_CA")
+    if p and os.path.exists(p):
+        return p
+    try:
+        import certifi
+        return certifi.where()
+    except Exception:
+        pass
+    if os.path.exists("/etc/ssl/cert.pem"):
+        return "/etc/ssl/cert.pem"
+    return None
+
+
+def get_url() -> str:
+    return _db_url()  # mysql+pymysql://.../goodsun?charset=utf8mb4
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode."""
-    url = config.get_main_option("sqlalchemy.url")
+    url = get_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        compare_type=False,             # ← 型差分も無視して静かに
-        compare_server_default=False,   # ← サーバーデフォルト差分も無視
-        include_object=include_object,
+        compare_type=True,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    ca = _resolve_ca_path()
+    connect_args = {"ssl": {"ca": ca}} if ca else {"ssl": {}}
+
+    # デバッグ用：どの CA を使ったかを INFO ログに出す
+    print(f"[alembic] Using SSL CA: {ca}", flush=True)
+
+    engine = create_engine(
+        get_url(),
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
-    with connectable.connect() as connection:
+
+    with engine.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            compare_type=False,             # ← 同上
-            compare_server_default=False,   # ← 同上
-            include_object=include_object,
+            compare_type=True,
         )
         with context.begin_transaction():
             context.run_migrations()
